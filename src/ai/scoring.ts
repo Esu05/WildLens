@@ -1,4 +1,5 @@
 import { getSpecies } from '../domain/species';
+import { SPECIES } from '../data/species';
 import type { Candidate, GroupGuess, IdentificationResult } from '../domain/types';
 
 /** CLIP's learned temperature. Cosine similarity × 100 gives the logits it was trained with. */
@@ -66,13 +67,16 @@ function bestGroup(labels: LabelMeta[], speciesProbs: number[]): GroupGuess | un
  * Turn probabilities (species first, then distractors, all from one softmax)
  * into a result the UI can show. Probability mass on distractors lowers species
  * confidence on purpose: a photo of a living room should not become "House Gecko".
+ *
+ * labels and topCosine are optional so the demo identifier, which only has the
+ * built-in species list, can still call this with three arguments.
  */
 export function buildResult(
   probs: number[],
   source: IdentificationResult['source'],
   modelId: string,
-  labels: LabelMeta[],
-  topCosine: number,
+  labels: LabelMeta[] = SPECIES.map((s) => ({ id: s.id, taxon: s.scientificName })),
+  topCosine = 1,
 ): IdentificationResult {
   const n = labels.length;
   const speciesProbs = probs.slice(0, n);
