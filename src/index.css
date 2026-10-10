@@ -1,0 +1,171 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Colour tokens as "r g b" so Tailwind can apply opacity. No gradients anywhere. */
+:root {
+  --paper: 247 245 239; /* parchment  #F7F5EF */
+  --card: 252 250 245;
+  --sand: 236 231 220;
+  --ink: 38 51 43; /* forest charcoal #26332B */
+  --soft: 84 98 89; /* secondary text, 5.9:1 on paper */
+  --moss: 74 106 85; /* actions; darker than the brand green so cream text passes AA */
+  --moss-ink: 247 245 239;
+  --sage: 168 185 165; /* #A8B9A5 */
+  --clay: 160 98 72;
+  --sky: 214 227 233;
+  --line: 214 208 194;
+  --app-h: 100vh;
+  --app-h: 100dvh;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --paper: 27 36 31;
+    --card: 35 46 40;
+    --sand: 21 29 25;
+    --ink: 240 234 220;
+    --soft: 176 187 176;
+    --moss: 168 185 165;
+    --moss-ink: 27 36 31;
+    --sage: 120 145 125;
+    --clay: 214 158 130;
+    --sky: 60 80 90;
+    --line: 58 72 64;
+    color-scheme: dark;
+  }
+}
+:root[data-theme='dark'] {
+  --paper: 27 36 31;
+  --card: 35 46 40;
+  --sand: 21 29 25;
+  --ink: 240 234 220;
+  --soft: 176 187 176;
+  --moss: 168 185 165;
+  --moss-ink: 27 36 31;
+  --sage: 120 145 125;
+  --clay: 214 158 130;
+  --sky: 60 80 90;
+  --line: 58 72 64;
+  color-scheme: dark;
+}
+
+/* On larger screens the app is a card, so its height leaves room for the margin around it. */
+@media (min-width: 640px) {
+  :root {
+    --app-h: calc(100vh - 3rem);
+    --app-h: min(56rem, calc(100dvh - 3rem));
+  }
+}
+
+@layer base {
+  html {
+    background: rgb(var(--sand));
+    -webkit-tap-highlight-color: transparent;
+    text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-sand font-sans text-ink antialiased;
+    font-size: 1.0625rem; /* 17px: easy to read outdoors */
+    line-height: 1.55;
+  }
+  h1, h2, h3 {
+    @apply font-semibold;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+  }
+  button, [role='button'], a, label, input, textarea {
+    touch-action: manipulation;
+  }
+  :focus-visible {
+    outline: 3px solid rgb(var(--moss));
+    outline-offset: 3px;
+    border-radius: 0.5rem;
+  }
+  textarea, input[type='text'] {
+    font: inherit;
+  }
+}
+
+@layer components {
+  /* The app window. Phones: the whole screen. Larger screens: a framed card. */
+  .frame {
+    @apply relative z-10 mx-auto flex w-full max-w-frame flex-col bg-paper;
+    min-height: var(--app-h);
+  }
+  @media (min-width: 640px) {
+    .frame {
+      height: var(--app-h);
+      margin-block: 1.5rem;
+      border-radius: 2rem;
+      overflow-x: hidden;
+      overflow-y: auto;
+      /* ring instead of border so inner heights stay exact */
+      box-shadow: 0 0 0 1px rgb(var(--line));
+      scrollbar-width: thin;
+    }
+  }
+  .h-app { height: var(--app-h); }
+  .min-h-app { min-height: var(--app-h); }
+  .sci {
+    @apply font-serif italic;
+  }
+  .label {
+    @apply text-[0.9375rem] font-medium text-soft;
+  }
+  .field {
+    @apply w-full rounded-2xl border border-line bg-card px-4 py-3 text-ink placeholder:text-soft/80;
+    min-height: 3.5rem;
+  }
+  .safe-b {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+  .safe-t {
+    padding-top: max(1rem, env(safe-area-inset-top));
+  }
+}
+
+/* Splash shown before the app mounts. */
+.boot {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  font: 600 1.75rem/1 Georgia, serif;
+  color: #26332b;
+  background: #f7f5ef;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .boot { color: #f0eadc; background: #1b241f; }
+}
+
+/* Gentle motion. Everything below is switched off for reduced-motion users. */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes reveal {
+  from { opacity: 0; transform: scale(1.015); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 0.55; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+@keyframes cycle {
+  0%, 100% { opacity: 0.35; }
+  30%, 60% { opacity: 1; }
+}
+.rise { animation: rise 420ms ease-out both; }
+.reveal { animation: reveal 600ms ease-out both; }
+.breathe { animation: breathe 2.4s ease-in-out infinite; }
+.cycle { animation: cycle 3.6s ease-in-out infinite; }
+.press { transition: transform 120ms ease; }
+.press:active { transform: scale(0.95); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
