@@ -39,33 +39,43 @@ Species are just text, so adding one never needs retraining. Only the image enco
 
 ```
 wildlens/
-├─ index.html, package.json, vite.config.ts, tailwind.config.js, tsconfig.json
-├─ render.yaml                   Render static-site blueprint
+├─ index.html
+├─ package.json, package-lock.json
+├─ vite.config.ts            Vite config and the service-worker precache plugin
+├─ tailwind.config.js, postcss.config.js, tsconfig.json
 ├─ scripts/
-│  ├─ copy-ort.mjs               copies ONNX Runtime wasm into public/ort
-│  └─ build-taxa.ts              looks up taxonomy on GBIF, writes public/models/labels.json
+│  ├─ build-taxa.ts          looks up taxonomy on GBIF, writes public/models/labels.json
+│  └─ copy-ort.mjs           copies ONNX Runtime wasm into public/ort
 ├─ public/
-│  ├─ sw.js, manifest.webmanifest, icons/
-│  ├─ ort/                       generated, not committed
-│  └─ models/                    model files, not committed (see below)
+│  ├─ sw.js, manifest.webmanifest
+│  ├─ icon.svg, icon-maskable.svg
+│  ├─ icons/                 PNG app icons
+│  ├─ models/                bioclip_image.onnx, labels.json, text_embeddings.bin (not committed)
+│  └─ ort/                   ONNX Runtime wasm files (generated, not committed)
 └─ src/
-   ├─ main.tsx, App.tsx
+   ├─ main.tsx, App.tsx      entry, view router, app shell
+   ├─ index.css              colour tokens, light and dark themes
    ├─ ai/
-   │  ├─ NatureIdentifier.ts     the interface the UI depends on
-   │  ├─ BioClipIdentifier.ts    real inference
-   │  ├─ DemoIdentifier.ts       dev-only fake results (?demo=1)
-   │  ├─ scoring.ts              softmax, thresholds, group fallback
-   │  ├─ modelInfo.ts            model id, file URLs, cache check and delete
-   │  └─ index.ts                lazy getIdentifier
-   ├─ data/                      species, general names and hazards, distractors
-   ├─ domain/                    types, species helpers, safety, challenges
-   ├─ screens/                   Onboarding, Home, Camera, Preview, Analyze, Result, Journal, Entry, Settings
-   ├─ components/, lib/, state/, storage/
+   │  ├─ NatureIdentifier.ts   the interface the UI depends on, plus error codes
+   │  ├─ BioClipIdentifier.ts  real inference with BioCLIP
+   │  ├─ DemoIdentifier.ts     dev-only fake results (?demo=1)
+   │  ├─ scoring.ts            softmax, thresholds, group fallback
+   │  ├─ modelInfo.ts          model id, file URLs, cache check and delete
+   │  └─ index.ts              lazy getIdentifier
+   ├─ components/            Backdrop, BottomNav, shared UI
+   ├─ data/                  species, general names and hazards, distractors
+   ├─ domain/                types, species helpers, safety notes, challenges
+   ├─ lib/                   format, geo, hooks, image, journal export
+   ├─ screens/               Onboarding, Home, Camera, Preview, Analyze, Result, Journal, Entry, Settings
+   ├─ state/settings.ts
+   └─ storage/db.ts          IndexedDB wrapper
 ```
+
+The UI only knows the `NatureIdentifier` interface, so the model can be swapped by changing `ai/index.ts` without touching any screen.
 
 ## Getting started
 
-You need Node 20 or newer. Python is only needed once, in Google Colab, to export the model.
+You need a recent Node version (Vite needs 20.19 or newer). Python is only needed once, in Google Colab, to export the model.
 
 ```bash
 git clone https://github.com/Esu05/wildlens.git
@@ -83,12 +93,53 @@ This looks up each species on GBIF and writes `public/models/labels.json`. Anyth
 
 ### 2. Export the model (once)
 
-Open a new Google Colab notebook, upload `labels.json`, and run the export cell from [`docs/export-bioclip.md`](docs/export-bioclip.md). It produces two files:
+Open a new Google Colab notebook, upload `labels.json`, and run this in one cell:
 
-- `bioclip_image.onnx` (the image encoder, roughly 330 MB)
-- `text_embeddings.bin` (the precomputed species and distractor embeddings)
+<details>
+<summary>Colab export cell</summary>
 
-Put both in `public/models/` next to `labels.json`. Rerun the export whenever the species list or the distractors change.
+```python
+!pip install -q open_clip_torch onnx
+
+import json, torch, open_clip
+
+model, _, _ = open_clip.create_model_and_transforms("hf-hub:imageomics/bioclip")
+tokenizer = open_clip.get_tokenizer("hf-hub:imageomics/bioclip")
+model.eval()
+print("logit scale:", model.logit_scale.exp().item())  # if not about 100, set LOGIT_SCALE in src/ai/scoring.ts
+
+class ImageEncoder(torch.nn.Module):
+    def __init__(self, m):
+        super().__init__()
+        self.m = m
+    def forward(self, x):
+        return self.m.encode_image(x, normalize=True)
+
+# if you get "unexpected keyword 'dynamo'", delete that argument
+torch.onnx.export(
+    ImageEncoder(model), torch.randn(1, 3, 224, 224), "bioclip_image.onnx",
+    input_names=["pixel_values"], output_names=["embedding"],
+    dynamic_axes={"pixel_values": {0: "batch"}}, opset_version=17, dynamo=False,
+)
+
+labels = json.load(open("labels.json"))
+prompts = [f"a photo of {s['taxon']}" for s in labels["species"]] + labels["distractors"]
+vecs = []
+with torch.no_grad():
+    for i in range(0, len(prompts), 64):
+        vecs.append(model.encode_text(tokenizer(prompts[i:i + 64]), normalize=True))
+emb = torch.cat(vecs)
+assert emb.shape[1] == labels["dim"]
+emb.numpy().astype("float32").tofile("text_embeddings.bin")
+
+from google.colab import files
+for f in ["bioclip_image.onnx", "text_embeddings.bin"]:
+    files.download(f)
+```
+
+</details>
+
+Put the two downloads in `public/models/` next to `labels.json`. The image encoder is roughly 330 MB. Rerun the cell whenever the species list or the distractors change.
 
 ### 3. Run it
 
@@ -98,20 +149,21 @@ npm run dev
 
 Open the printed URL. The first run downloads the model and caches it with the Cache API. `?demo=1` switches to fake results for UI work.
 
-## Deploying on Render
+## Deploying
 
-Render hosts the app as a static site. The model files are too big for GitHub (100 MB per file limit), so they live on Hugging Face and the app downloads them from there on first use.
+WildLens is a static site, so any static host works. Both Vercel and Render are fine.
 
-1. **Host the model files.** Create a model repo on Hugging Face and upload `bioclip_image.onnx`, `text_embeddings.bin` and `labels.json` to it. The base URL is `https://huggingface.co/<user>/<repo>/resolve/main`.
-2. **Push the code.** Keep `public/models/` and `public/ort/` in `.gitignore`.
-3. **Create the site.** In Render choose New, then Blueprint, and select this repo. It reads `render.yaml`. Or create a Static Site by hand:
-   - Build command: `npm ci && npm run build`
-   - Publish directory: `dist`
-   - Rewrite rule: `/*` to `/index.html` (the app uses client-side routing)
-4. **Set the environment variable** `VITE_MODEL_HOST` to the Hugging Face base URL from step 1. Vite reads it at build time, so redeploy after changing it.
-5. The build must run `scripts/copy-ort.mjs` so `public/ort/` exists. Check that `package.json` calls it from a `prebuild` or `postinstall` script.
+**Before you deploy**
 
-Camera access needs HTTPS. Render provides it by default.
+- The model file is too big for GitHub (100 MB per file limit). Host `bioclip_image.onnx`, `text_embeddings.bin` and `labels.json` in a Hugging Face model repo and point the build at it with the `VITE_MODEL_HOST` environment variable, for example `https://huggingface.co/<user>/<repo>/resolve/main`. Vite reads it at build time, so redeploy after changing it.
+- Keep `node_modules/`, `dist/`, `public/models/` and `public/ort/` in `.gitignore`.
+- The build must run `scripts/copy-ort.mjs` so `public/ort/` exists. Check that `package.json` calls it from a `prebuild` or `postinstall` script.
+- The service-worker precache plugin in `vite.config.ts` must not include `models/`, or every visitor downloads the model on first load. The app downloads it itself, once, with progress.
+- Camera access needs HTTPS. Both hosts provide it by default.
+
+**Render**
+
+Create a Static Site from the repo with build command `npm ci && npm run build` and publish directory `dist`. Add `VITE_MODEL_HOST` as an environment variable. Under Redirects/Rewrites add a rewrite from `/*` to `/index.html`. If the build complains about the Node version, set `NODE_VERSION` to `22`.
 
 ## Privacy
 
@@ -131,7 +183,6 @@ Camera access needs HTTPS. Render provides it by default.
 - [BioCLIP](https://huggingface.co/imageomics/bioclip) by the Imageomics Institute (MIT licence). Stevens et al., "BioCLIP: A Vision Foundation Model for the Tree of Life", CVPR 2024.
 - [ONNX Runtime Web](https://onnxruntime.ai/) for in-browser inference.
 - [GBIF](https://www.gbif.org/) for taxonomy.
-
 
 ## License
 
